@@ -17,6 +17,9 @@ function initMap() {
 
     const toggleMoveBtn = document.getElementById('toggle-move-btn');
     toggleMoveBtn.addEventListener('click', toggleMoveMode);
+
+    const exportBtn = document.getElementById('export-driven-line-btn');
+    exportBtn.addEventListener('click', handleExportDrivenLine);
 }
 
 function handleFileUpload(event) {
@@ -76,6 +79,7 @@ function drawAverageLine(path) {
     averageLinePolyline.setMap(map);
     document.getElementById('toggle-edit-btn').disabled = false;
     document.getElementById('toggle-move-btn').disabled = false;
+    document.getElementById('export-driven-line-btn').disabled = false;
 }
 
 function toggleEditMode() {
@@ -84,7 +88,6 @@ function toggleEditMode() {
     const isEditable = averageLinePolyline.getEditable();
     averageLinePolyline.setEditable(!isEditable);
 
-    // If turning edit mode ON, make sure move mode is OFF.
     if (!isEditable) {
         if (averageLinePolyline.getDraggable()) {
             averageLinePolyline.setDraggable(false);
@@ -101,7 +104,6 @@ function toggleMoveMode() {
     const isDraggable = averageLinePolyline.getDraggable();
     averageLinePolyline.setDraggable(!isDraggable);
 
-    // If turning move mode ON, make sure edit mode is OFF.
     if (!isDraggable) {
         if (averageLinePolyline.getEditable()) {
             averageLinePolyline.setEditable(false);
@@ -110,6 +112,24 @@ function toggleMoveMode() {
     }
 
     document.getElementById('toggle-move-btn').textContent = !isDraggable ? 'Finish Moving' : 'Move Line';
+}
+
+function handleExportDrivenLine() {
+    if (!averageLinePolyline) {
+        alert("There is no average line to export.");
+        return;
+    }
+
+    const path = averageLinePolyline.getPath().getArray();
+    const plainPath = path.map(latLng => ({ lat: latLng.lat(), lng: latLng.lng() }));
+
+    if (plainPath.length === 0) {
+        alert("The average line is empty.");
+        return;
+    }
+
+    const kmlContent = generateKML(plainPath);
+    downloadFile(kmlContent, 'driven-line.kml', 'application/vnd.google-earth.kml+xml');
 }
 
 function clearLaps() {
@@ -130,6 +150,8 @@ function clearLaps() {
     const toggleMoveBtn = document.getElementById('toggle-move-btn');
     toggleMoveBtn.disabled = true;
     toggleMoveBtn.textContent = 'Move Line';
+
+    document.getElementById('export-driven-line-btn').disabled = true;
 }
 
 function fitMapToLaps(paths) {
@@ -165,6 +187,37 @@ function parseKML(kmlContent) {
     return path;
 }
 
+function generateKML(path) {
+    const coordinateString = path.map(p => `${p.lng},${p.lat},0`).join('\n          ');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Average Driven Line</name>
+      <LineString>
+        <coordinates>
+          ${coordinateString}
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>`;
+}
+
+function downloadFile(content, filename, contentType) {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 // =============================================
 // Average Line Calculation
