@@ -172,7 +172,7 @@ function handleComputeBorders() {
     console.log("Computing track borders...");
     const averagePath = averageLinePolyline.getPath().getArray().map(p => ({ lat: p.lat(), lng: p.lng() }));
 
-    const { leftBorder, rightBorder } = computeTrackBorders(averagePath, allLapPaths);
+    const { leftBorder, rightBorder } = computeTrackBorders(averagePath);
 
     if (leftBorder.length > 0 && rightBorder.length > 0) {
         drawTrackBorders({ leftBorder, rightBorder });
@@ -285,66 +285,39 @@ function downloadFile(content, filename, contentType) {
 // Track Border Calculation
 // =============================================
 
-const Vector = {
-  subtract: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
-  add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
-  scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
-  normalize: (a) => {
-    const len = Math.sqrt(a.x * a.x + a.y * a.y);
-    if (len === 0) return { x: 0, y: 0 };
-    return { x: a.x / len, y: a.y / len };
-  },
-  dot: (a, b) => a.x * b.x + a.y * b.y,
-  rotate90: (a) => ({ x: -a.y, y: a.x }), // Rotate counter-clockwise
-};
-
-function computeTrackBorders(averagePath, allLapPaths) {
-    if (!map.getProjection() || !averagePath || averagePath.length < 2 || !allLapPaths || allLapPaths.length === 0) {
+function computeTrackBorders(averagePath) {
+    if (!google.maps.geometry) {
+        console.error("Google Maps Geometry library not loaded.");
+        return { leftBorder: [], rightBorder: [] };
+    }
+    if (!averagePath || averagePath.length < 2) {
         return { leftBorder: [], rightBorder: [] };
     }
 
-    const projection = map.getProjection();
+    const leftBorder = [];
+    const rightBorder = [];
+    const offset = 10; // 10 meters
 
-    const avgPathPoints = averagePath.map(p => projection.fromLatLngToPoint(new google.maps.LatLng(p)));
-    const allLapPoints = allLapPaths.flat().map(p => projection.fromLatLngToPoint(new google.maps.LatLng(p)));
+    for (let i = 0; i < averagePath.length; i++) {
+        const currentPoint = new google.maps.LatLng(averagePath[i]);
+        let heading;
 
-    const leftBorderPoints = [];
-    const rightBorderPoints = [];
-
-    for (let i = 0; i < avgPathPoints.length; i++) {
-        const p_i = avgPathPoints[i];
-
-        let tangent;
         if (i === 0) {
-            tangent = Vector.subtract(avgPathPoints[i + 1], p_i);
-        } else if (i === avgPathPoints.length - 1) {
-            tangent = Vector.subtract(p_i, avgPathPoints[i - 1]);
+            // For the first point, use the heading of the first segment
+            heading = google.maps.geometry.spherical.computeHeading(currentPoint, new google.maps.LatLng(averagePath[i + 1]));
         } else {
-            tangent = Vector.subtract(avgPathPoints[i + 1], avgPathPoints[i - 1]);
+            // For other points, use the heading from the previous point to the current one
+            heading = google.maps.geometry.spherical.computeHeading(new google.maps.LatLng(averagePath[i - 1]), currentPoint);
         }
 
-        const normal = Vector.normalize(Vector.rotate90(tangent));
+        // Calculate points 10m to the left and right
+        // Note: A heading of -90 is left, +90 is right.
+        const leftPoint = google.maps.geometry.spherical.computeOffset(currentPoint, offset, heading - 90);
+        const rightPoint = google.maps.geometry.spherical.computeOffset(currentPoint, offset, heading + 90);
 
-        let maxLeftDist = 0;
-        let maxRightDist = 0;
-
-        for (const lapPoint of allLapPoints) {
-            const vecToLapPoint = Vector.subtract(lapPoint, p_i);
-            const dist = Vector.dot(vecToLapPoint, normal);
-
-            if (dist > 0) {
-                if (dist > maxLeftDist) maxLeftDist = dist;
-            } else {
-                if (dist < maxRightDist) maxRightDist = dist;
-            }
-        }
-
-        leftBorderPoints.push(Vector.add(p_i, Vector.scale(normal, maxLeftDist)));
-        rightBorderPoints.push(Vector.add(p_i, Vector.scale(normal, maxRightDist)));
+        leftBorder.push(leftPoint);
+        rightBorder.push(rightPoint);
     }
-
-    const leftBorder = leftBorderPoints.map(p => projection.fromPointToLatLng(p));
-    const rightBorder = rightBorderPoints.map(p => projection.fromPointToLatLng(p));
 
     return { leftBorder, rightBorder };
 }
