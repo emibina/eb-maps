@@ -14,6 +14,9 @@ function initMap() {
 
     const toggleEditBtn = document.getElementById('toggle-edit-btn');
     toggleEditBtn.addEventListener('click', toggleEditMode);
+
+    const toggleMoveBtn = document.getElementById('toggle-move-btn');
+    toggleMoveBtn.addEventListener('click', toggleMoveMode);
 }
 
 function handleFileUpload(event) {
@@ -72,17 +75,41 @@ function drawAverageLine(path) {
     });
     averageLinePolyline.setMap(map);
     document.getElementById('toggle-edit-btn').disabled = false;
+    document.getElementById('toggle-move-btn').disabled = false;
 }
 
 function toggleEditMode() {
-    if (!averageLinePolyline) {
-        return;
-    }
+    if (!averageLinePolyline) return;
+
     const isEditable = averageLinePolyline.getEditable();
     averageLinePolyline.setEditable(!isEditable);
 
-    const toggleEditBtn = document.getElementById('toggle-edit-btn');
-    toggleEditBtn.textContent = !isEditable ? 'Finish Editing' : 'Toggle Edit Mode';
+    // If turning edit mode ON, make sure move mode is OFF.
+    if (!isEditable) {
+        if (averageLinePolyline.getDraggable()) {
+            averageLinePolyline.setDraggable(false);
+            document.getElementById('toggle-move-btn').textContent = 'Move Line';
+        }
+    }
+
+    document.getElementById('toggle-edit-btn').textContent = !isEditable ? 'Finish Editing' : 'Toggle Edit Mode';
+}
+
+function toggleMoveMode() {
+    if (!averageLinePolyline) return;
+
+    const isDraggable = averageLinePolyline.getDraggable();
+    averageLinePolyline.setDraggable(!isDraggable);
+
+    // If turning move mode ON, make sure edit mode is OFF.
+    if (!isDraggable) {
+        if (averageLinePolyline.getEditable()) {
+            averageLinePolyline.setEditable(false);
+            document.getElementById('toggle-edit-btn').textContent = 'Toggle Edit Mode';
+        }
+    }
+
+    document.getElementById('toggle-move-btn').textContent = !isDraggable ? 'Finish Moving' : 'Move Line';
 }
 
 function clearLaps() {
@@ -99,6 +126,10 @@ function clearLaps() {
     const toggleEditBtn = document.getElementById('toggle-edit-btn');
     toggleEditBtn.disabled = true;
     toggleEditBtn.textContent = 'Toggle Edit Mode';
+
+    const toggleMoveBtn = document.getElementById('toggle-move-btn');
+    toggleMoveBtn.disabled = true;
+    toggleMoveBtn.textContent = 'Move Line';
 }
 
 function fitMapToLaps(paths) {
