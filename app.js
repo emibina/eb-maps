@@ -1,6 +1,9 @@
 let map;
 let lapPolylines = []; // Array to store lap polylines
 let averageLinePolyline = null; // To store the average line polyline
+let allLapPaths = []; // To store the paths of all original laps
+let leftBorderPolyline = null;
+let rightBorderPolyline = null;
 
 function initMap() {
     const mapOptions = {
@@ -20,6 +23,9 @@ function initMap() {
 
     const exportBtn = document.getElementById('export-driven-line-btn');
     exportBtn.addEventListener('click', handleExportDrivenLine);
+
+    const computeBordersBtn = document.getElementById('compute-borders-btn');
+    computeBordersBtn.addEventListener('click', handleComputeBorders);
 }
 
 function handleFileUpload(event) {
@@ -30,7 +36,6 @@ function handleFileUpload(event) {
         return;
     }
 
-    const allPaths = [];
     let filesRead = 0;
 
     for (const file of files) {
@@ -40,13 +45,13 @@ function handleFileUpload(event) {
             const coordinates = parseKML(kmlContent);
             if (coordinates.length > 0) {
                 drawLap(coordinates);
-                allPaths.push(coordinates);
+                allLapPaths.push(coordinates);
             }
 
             filesRead++;
-            if (filesRead === files.length && allPaths.length > 0) {
-                fitMapToLaps(allPaths);
-                const averagePath = calculateAverageLine(allPaths);
+            if (filesRead === files.length && allLapPaths.length > 0) {
+                fitMapToLaps(allLapPaths);
+                const averagePath = calculateAverageLine(allLapPaths);
                 if (averagePath.length > 0) {
                     drawAverageLine(averagePath);
                 }
@@ -80,6 +85,29 @@ function drawAverageLine(path) {
     document.getElementById('toggle-edit-btn').disabled = false;
     document.getElementById('toggle-move-btn').disabled = false;
     document.getElementById('export-driven-line-btn').disabled = false;
+    document.getElementById('compute-borders-btn').disabled = false;
+}
+
+function drawTrackBorders({ leftBorder, rightBorder }) {
+    const borderOptions = {
+        geodesic: true,
+        strokeColor: '#333333', // Dark grey
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+    };
+
+    leftBorderPolyline = new google.maps.Polyline({
+        ...borderOptions,
+        path: leftBorder,
+    });
+
+    rightBorderPolyline = new google.maps.Polyline({
+        ...borderOptions,
+        path: rightBorder,
+    });
+
+    leftBorderPolyline.setMap(map);
+    rightBorderPolyline.setMap(map);
 }
 
 function toggleEditMode() {
@@ -132,15 +160,47 @@ function handleExportDrivenLine() {
     downloadFile(kmlContent, 'driven-line.kml', 'application/vnd.google-earth.kml+xml');
 }
 
+function handleComputeBorders() {
+    if (!averageLinePolyline || allLapPaths.length === 0) {
+        alert("Please load KML lap data and ensure an average line is present.");
+        return;
+    }
+
+    if (leftBorderPolyline) leftBorderPolyline.setMap(null);
+    if (rightBorderPolyline) rightBorderPolyline.setMap(null);
+
+    console.log("Computing track borders...");
+    const averagePath = averageLinePolyline.getPath().getArray().map(p => ({ lat: p.lat(), lng: p.lng() }));
+
+    const { leftBorder, rightBorder } = computeTrackBorders(averagePath, allLapPaths);
+
+    if (leftBorder.length > 0 && rightBorder.length > 0) {
+        drawTrackBorders({ leftBorder, rightBorder });
+        console.log("Track borders drawn.");
+    } else {
+        console.error("Failed to compute track borders.");
+    }
+}
+
 function clearLaps() {
     for (let i = 0; i < lapPolylines.length; i++) {
         lapPolylines[i].setMap(null);
     }
     lapPolylines = [];
+    allLapPaths = []; // Clear stored paths
 
     if (averageLinePolyline) {
         averageLinePolyline.setMap(null);
         averageLinePolyline = null;
+    }
+
+    if (leftBorderPolyline) {
+        leftBorderPolyline.setMap(null);
+        leftBorderPolyline = null;
+    }
+    if (rightBorderPolyline) {
+        rightBorderPolyline.setMap(null);
+        rightBorderPolyline = null;
     }
 
     const toggleEditBtn = document.getElementById('toggle-edit-btn');
@@ -152,6 +212,8 @@ function clearLaps() {
     toggleMoveBtn.textContent = 'Move Line';
 
     document.getElementById('export-driven-line-btn').disabled = true;
+
+    document.getElementById('compute-borders-btn').disabled = true;
 }
 
 function fitMapToLaps(paths) {
@@ -217,6 +279,74 @@ function downloadFile(content, filename, contentType) {
 
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+// =============================================
+// Track Border Calculation
+// =============================================
+
+const Vector = {
+  subtract: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+  add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+  scale: (a, s) => ({ x: a.x * s, y: a.y * s }),
+  normalize: (a) => {
+    const len = Math.sqrt(a.x * a.x + a.y * a.y);
+    if (len === 0) return { x: 0, y: 0 };
+    return { x: a.x / len, y: a.y / len };
+  },
+  dot: (a, b) => a.x * b.x + a.y * b.y,
+  rotate90: (a) => ({ x: -a.y, y: a.x }), // Rotate counter-clockwise
+};
+
+function computeTrackBorders(averagePath, allLapPaths) {
+    if (!map.getProjection() || !averagePath || averagePath.length < 2 || !allLapPaths || allLapPaths.length === 0) {
+        return { leftBorder: [], rightBorder: [] };
+    }
+
+    const projection = map.getProjection();
+
+    const avgPathPoints = averagePath.map(p => projection.fromLatLngToPoint(new google.maps.LatLng(p)));
+    const allLapPoints = allLapPaths.flat().map(p => projection.fromLatLngToPoint(new google.maps.LatLng(p)));
+
+    const leftBorderPoints = [];
+    const rightBorderPoints = [];
+
+    for (let i = 0; i < avgPathPoints.length; i++) {
+        const p_i = avgPathPoints[i];
+
+        let tangent;
+        if (i === 0) {
+            tangent = Vector.subtract(avgPathPoints[i + 1], p_i);
+        } else if (i === avgPathPoints.length - 1) {
+            tangent = Vector.subtract(p_i, avgPathPoints[i - 1]);
+        } else {
+            tangent = Vector.subtract(avgPathPoints[i + 1], avgPathPoints[i - 1]);
+        }
+
+        const normal = Vector.normalize(Vector.rotate90(tangent));
+
+        let maxLeftDist = 0;
+        let maxRightDist = 0;
+
+        for (const lapPoint of allLapPoints) {
+            const vecToLapPoint = Vector.subtract(lapPoint, p_i);
+            const dist = Vector.dot(vecToLapPoint, normal);
+
+            if (dist > 0) {
+                if (dist > maxLeftDist) maxLeftDist = dist;
+            } else {
+                if (dist < maxRightDist) maxRightDist = dist;
+            }
+        }
+
+        leftBorderPoints.push(Vector.add(p_i, Vector.scale(normal, maxLeftDist)));
+        rightBorderPoints.push(Vector.add(p_i, Vector.scale(normal, maxRightDist)));
+    }
+
+    const leftBorder = leftBorderPoints.map(p => projection.fromPointToLatLng(p));
+    const rightBorder = rightBorderPoints.map(p => projection.fromPointToLatLng(p));
+
+    return { leftBorder, rightBorder };
 }
 
 // =============================================
